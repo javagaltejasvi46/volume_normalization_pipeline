@@ -106,3 +106,16 @@ def test_dynamic_filter_string():
     assert "linear=false" in f_str
     assert "I=-16.0" in f_str
     assert "TP=-2.0" in f_str
+
+
+def test_sanitization_of_positive_loudnorm_parameters():
+    # If positive numbers slip through
+    cmd = build_analysis_command(
+        ffmpeg_path=Path("ffmpeg.exe"),
+        input_path=Path("test.mp4"),
+        target_i=15.0,
+        target_tp=2.0,
+    )
+    filter_arg = cmd[cmd.index("-filter:a") + 1]
+    assert "I=-15.0" in filter_arg
+    assert "TP=-2.0" in filter_arg

@@ -146,12 +146,23 @@ class SettingsModal(ModalScreen[Optional[AppConfig]]):
             is_fixed = self.query_one("#radio-fixed", RadioButton).value
             mode = NormalizationMode.FIXED if is_fixed else NormalizationMode.BATCH_MEDIAN
 
+            # Auto-negate if positive (e.g. user typed 15 or 15.0 instead of -15.0)
+            if target_lufs > 0:
+                target_lufs = -target_lufs
+            if peak_ceiling > 0:
+                peak_ceiling = -peak_ceiling
+
             self.config.mode = mode
             self.config.fixed_target_lufs = target_lufs
             self.config.true_peak_ceiling_dbtp = peak_ceiling
             self.config.audio_bitrate = bitrate
             self.config.output_dir = out_dir
             self.config.allow_dynamic = allow_dyn
+
+            errors = self.config.validate()
+            if errors:
+                self.notify("\n".join(errors), severity="error", timeout=6)
+                return
 
             self.dismiss(self.config)
         except Exception as e:

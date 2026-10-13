@@ -517,6 +517,12 @@ def process_cli(
         overwrite_existing=overwrite,
     )
 
+    errors = config.validate()
+    if errors:
+        for err in errors:
+            console.print(f"[red]Configuration error: {err}[/red]")
+        raise typer.Exit(code=1)
+
     env = discover_ffmpeg(config.ffmpeg_path, config.ffprobe_path)
     if not env.is_ready:
         console.print(f"[red]FFmpeg error: {env.ffmpeg.error_message or 'FFmpeg not ready'}[/red]")

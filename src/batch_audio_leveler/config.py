@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from batch_audio_leveler.models import NormalizationMode
 
@@ -29,6 +29,16 @@ class AppConfig:
     ffmpeg_path: Optional[Path] = None
     ffprobe_path: Optional[Path] = None
     timeout_seconds: int = 1800
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        # LUFS and dBTP are negative decibel scales relative to digital full scale (0 dBFS).
+        # Users frequently enter positive numbers (e.g. 15.0 instead of -15.0, or 2.0 instead of -2.0).
+        # Automatically negate positive values so downstream FFmpeg loudnorm commands do not fail.
+        if name == "fixed_target_lufs" and isinstance(value, (int, float)) and value > 0:
+            value = -float(value)
+        elif name == "true_peak_ceiling_dbtp" and isinstance(value, (int, float)) and value > 0:
+            value = -float(value)
+        super().__setattr__(name, value)
 
     def validate(self) -> list[str]:
         """Validate configuration values and return a list of error strings if any."""

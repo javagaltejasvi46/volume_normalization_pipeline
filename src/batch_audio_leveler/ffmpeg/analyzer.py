@@ -121,6 +121,17 @@ def measure_file_loudness(
     if not file_path.is_file():
         raise LoudnessAnalysisError(f"Input file not found: {file_path}")
 
+    # Sanitize inputs for FFmpeg loudnorm filter
+    if target_i > 0:
+        target_i = -target_i
+    target_i = max(-70.0, min(-5.0, target_i))
+
+    if target_tp > 0:
+        target_tp = -target_tp
+    target_tp = max(-9.0, min(0.0, target_tp))
+
+    target_lra = max(1.0, min(50.0, target_lra))
+
     # Build measurement command
     # Filter loudnorm with print_format=json directed to null muxer
     filter_expr = f"loudnorm=I={target_i:.1f}:TP={target_tp:.1f}:LRA={target_lra:.1f}:print_format=json"

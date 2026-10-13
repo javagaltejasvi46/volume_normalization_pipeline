@@ -18,6 +18,16 @@ def build_analysis_command(
     target_lra: float = 11.0,
 ) -> List[str]:
     """Build argument list for Pass 1 loudnorm measurement."""
+    if target_i > 0:
+        target_i = -target_i
+    target_i = max(-70.0, min(-5.0, target_i))
+
+    if target_tp > 0:
+        target_tp = -target_tp
+    target_tp = max(-9.0, min(0.0, target_tp))
+
+    target_lra = max(1.0, min(50.0, target_lra))
+
     filter_expr = f"loudnorm=I={target_i:.1f}:TP={target_tp:.1f}:LRA={target_lra:.1f}:print_format=json"
     return [
         str(ffmpeg_path),
@@ -44,6 +54,16 @@ def build_loudnorm_filter_string(
     target_i = plan.batch_target_lufs
     target_tp = plan.true_peak_ceiling_dbtp
     target_lra = config.target_lra
+
+    if target_i > 0:
+        target_i = -target_i
+    target_i = max(-70.0, min(-5.0, target_i))
+
+    if target_tp > 0:
+        target_tp = -target_tp
+    target_tp = max(-9.0, min(0.0, target_tp))
+
+    target_lra = max(1.0, min(50.0, target_lra))
 
     measured_i = measurement.integrated_lufs if measurement.integrated_lufs is not None else target_i
     measured_tp = measurement.true_peak_dbtp if measurement.true_peak_dbtp is not None else target_tp
