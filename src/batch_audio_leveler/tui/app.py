@@ -1160,6 +1160,7 @@ class BatchAudioLevelerApp(App[None]):
             TrimModal(
                 default_file=target_file,
                 default_output_dir=self.config.output_dir / "trimmed_audio",
+                ffmpeg_path=self.env.ffmpeg.path if self.env.ffmpeg.available else None,
                 ffprobe_path=self.env.ffprobe.path if self.env.ffprobe.available else None,
             ),
             _handle_trim_job,

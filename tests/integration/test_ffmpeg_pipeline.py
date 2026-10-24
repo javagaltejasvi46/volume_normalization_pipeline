@@ -239,8 +239,8 @@ def test_audio_trim_integration(synthetic_mp4: Path, tmp_path: Path):
     cfg = TrimJobConfig(
         source_file=synthetic_mp4,
         segments=[
-            AudioSegment(start_seconds=0.5, end_seconds=1.5, label="part1"),
-            AudioSegment(start_seconds=1.0, end_seconds=2.5, label="part2"),
+            AudioSegment(start_seconds=0.2, end_seconds=1.2, label="part1"),
+            AudioSegment(start_seconds=1.4, end_seconds=2.6, label="part2"),
         ],
         output_dir=out_dir,
         output_format="mp3",
@@ -264,4 +264,30 @@ def test_audio_trim_integration(synthetic_mp4: Path, tmp_path: Path):
     probe_clip1 = probe_file(clip1, env.ffprobe.path)
     assert len(probe_clip1.audio_streams) == 1
     assert abs(probe_clip1.duration_seconds - 1.0) < 0.2
+
+
+def test_audio_trim_collision_rejected(synthetic_mp4: Path, tmp_path: Path):
+    from batch_audio_leveler.trimmer import (
+        AudioSegment,
+        TrimJobConfig,
+        trim_audio_segments,
+    )
+
+    out_dir = tmp_path / "collision_trimmed"
+    cfg = TrimJobConfig(
+        source_file=synthetic_mp4,
+        segments=[
+            AudioSegment(start_seconds=0.5, end_seconds=1.5, label="part1"),
+            AudioSegment(start_seconds=1.0, end_seconds=2.5, label="part2"),
+        ],
+        output_dir=out_dir,
+    )
+
+    import pytest
+    with pytest.raises(ValueError, match="Cannot export clips due to segment errors"):
+        trim_audio_segments(
+            config=cfg,
+            ffmpeg_path=env.ffmpeg.path,
+            ffprobe_path=env.ffprobe.path,
+        )
 

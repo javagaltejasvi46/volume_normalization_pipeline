@@ -93,3 +93,22 @@ def test_trim_audio_segments_mocked(tmp_path: Path):
         assert len(res.failed_segments) == 0
         assert (out_dir / "song_intro.mp3").is_file()
         assert (out_dir / "song_verse.mp3").is_file()
+
+
+def test_trim_audio_segments_rejects_collisions(tmp_path: Path):
+    src = tmp_path / "song.mp3"
+    src.write_text("dummy audio")
+    out_dir = tmp_path / "trimmed"
+
+    cfg = TrimJobConfig(
+        source_file=src,
+        segments=[
+            AudioSegment(start_seconds=10.0, end_seconds=30.0, label="seg1"),
+            AudioSegment(start_seconds=20.0, end_seconds=40.0, label="seg2"),  # collision!
+        ],
+        output_dir=out_dir,
+    )
+
+    with pytest.raises(ValueError, match="Cannot export clips due to segment errors"):
+        trim_audio_segments(cfg, Path("ffmpeg.exe"))
+

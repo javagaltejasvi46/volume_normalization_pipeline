@@ -75,6 +75,12 @@ def trim_audio_segments(
     if ffprobe_path and ffprobe_path.is_file():
         total_duration = probe_audio_duration(source_file, ffprobe_path)
 
+    # Validate all segments for negative pointers, invalid ranges, and collisions
+    from batch_audio_leveler.trimmer.collisions import validate_segments_for_export
+    val_errors = validate_segments_for_export(config.segments, total_duration)
+    if val_errors:
+        raise ValueError("Cannot export clips due to segment errors:\n" + "\n".join(val_errors))
+
     result = TrimResult(source_file=source_file)
     total_segs = len(config.segments)
 
