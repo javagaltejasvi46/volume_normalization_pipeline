@@ -321,6 +321,12 @@ class MetadataModal(ModalScreen[Optional[MetadataTaskConfig]]):
                 )
                 return
 
+            # Auto-resolve directory destinations or missing .csv extension
+            if out_csv.is_dir():
+                out_csv = out_csv / "media_metadata.csv"
+            elif not out_csv.suffix or out_csv.suffix.lower() != ".csv":
+                out_csv = out_csv.with_suffix(".csv")
+
             task = MetadataTaskConfig(
                 action="export",
                 source_dir=src_dir,
@@ -347,6 +353,20 @@ class MetadataModal(ModalScreen[Optional[MetadataTaskConfig]]):
             csv_path = clean_path(csv_raw)
             src_dir = clean_path(src_raw)
             dest_dir = clean_path(dest_raw)
+
+            # Auto-resolve directory path to contained CSV
+            if csv_path.is_dir():
+                cand = csv_path / "media_metadata.csv"
+                if cand.is_file():
+                    csv_path = cand
+                else:
+                    found = list(csv_path.glob("*.csv"))
+                    if found:
+                        csv_path = sorted(found)[0]
+            elif not csv_path.suffix or csv_path.suffix.lower() != ".csv":
+                cand = csv_path.with_suffix(".csv")
+                if cand.is_file():
+                    csv_path = cand
 
             if not csv_path.is_file():
                 self.notify(

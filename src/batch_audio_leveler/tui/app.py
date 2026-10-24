@@ -1066,6 +1066,15 @@ class BatchAudioLevelerApp(App[None]):
         self.is_busy = True
         self.current_operation = "Exporting Metadata"
         self.call_from_thread(self.update_summary_cards)
+
+        out_csv = task.output_csv
+        if out_csv.is_dir():
+            out_csv = out_csv / "media_metadata.csv"
+            task.output_csv = out_csv
+        elif not out_csv.suffix or out_csv.suffix.lower() != ".csv":
+            out_csv = out_csv.with_suffix(".csv")
+            task.output_csv = out_csv
+
         self.call_from_thread(
             self.log_message,
             f"Starting metadata extraction from '{task.source_dir}' -> '{task.output_csv.name}'...",

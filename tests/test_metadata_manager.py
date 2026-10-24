@@ -158,3 +158,56 @@ def test_apply_metadata_from_csv(tmp_path: Path):
         final_file = out_dir / "track1.mp4"
         assert final_file.is_file()
         assert final_file.read_text() == "updated media content"
+
+
+def test_extract_directory_metadata_to_directory_destination(tmp_path: Path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "track.mp3").touch()
+
+    # Destination is an existing folder
+    dest_dir = tmp_path / "result_dir"
+    dest_dir.mkdir()
+
+    mock_probe_output = {
+        "format": {"tags": {"title": "Test Title"}},
+        "streams": [],
+    }
+
+    with patch("subprocess.run") as mock_run:
+        mock_proc = MagicMock()
+        mock_proc.stdout = json.dumps(mock_probe_output)
+        mock_run.return_value = mock_proc
+
+        count = extract_directory_metadata(src_dir, dest_dir, Path("ffprobe.exe"))
+        assert count == 1
+        # Should have automatically created media_metadata.csv inside dest_dir
+        csv_file = dest_dir / "media_metadata.csv"
+        assert csv_file.is_file()
+
+
+def test_apply_metadata_from_csv_directory_path(tmp_path: Path):
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    (src_dir / "track1.mp4").write_text("dummy media content")
+
+    csv_folder = tmp_path / "csv_folder"
+    csv_folder.mkdir()
+    csv_file = csv_folder / "media_metadata.csv"
+    with open(csv_file, mode="w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=["filename", "title"])
+        writer.writeheader()
+        writer.writerow({"filename": "track1.mp4", "title": "New Title"})
+
+    out_dir = tmp_path / "dest"
+
+    def fake_subprocess_run(cmd, **kwargs):
+        temp_out = Path(cmd[-1])
+        temp_out.write_text("updated media content")
+        res = MagicMock()
+        res.returncode = 0
+        return res
+
+    with patch("subprocess.run", side_effect=fake_subprocess_run):
+        res = apply_metadata_from_csv(csv_folder, src_dir, out_dir, Path("ffmpeg.exe"))
+        assert res.updated_count == 1

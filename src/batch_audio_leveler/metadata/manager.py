@@ -121,6 +121,12 @@ def extract_directory_metadata(
     if not source_dir.is_dir():
         raise ValueError(f"Source directory does not exist: {source_dir}")
 
+    # If the user specified an existing directory or folder path, save inside it
+    if output_csv_path.is_dir():
+        output_csv_path = output_csv_path / "media_metadata.csv"
+    elif not output_csv_path.suffix or output_csv_path.suffix.lower() != ".csv":
+        output_csv_path = output_csv_path.with_suffix(".csv")
+
     ensure_directory(output_csv_path.parent)
 
     pattern = source_dir.rglob("*") if recursive else source_dir.glob("*")
@@ -170,10 +176,22 @@ def extract_directory_metadata(
         )
 
     # Write CSV with utf-8-sig encoding for seamless Excel/Windows Unicode support
-    with open(output_csv_path, mode="w", newline="", encoding="utf-8-sig") as f:
-        writer = csv.DictWriter(f, fieldnames=STANDARD_TAGS)
-        writer.writeheader()
-        writer.writerows(rows)
+    try:
+        with open(output_csv_path, mode="w", newline="", encoding="utf-8-sig") as f:
+            writer = csv.DictWriter(f, fieldnames=STANDARD_TAGS)
+            writer.writeheader()
+            writer.writerows(rows)
+    except PermissionError as e:
+        if output_csv_path.is_dir():
+            raise PermissionError(
+                f"Cannot write CSV to '{output_csv_path}' because it is an existing directory. "
+                f"Please specify a .csv file name (e.g. '{output_csv_path}\\media_metadata.csv')."
+            ) from e
+        raise PermissionError(
+            f"Cannot write to '{output_csv_path}': Permission denied. "
+            f"If '{output_csv_path.name}' is open in Microsoft Excel or another program, "
+            f"please close it and try again."
+        ) from e
 
     return len(rows)
 
@@ -186,9 +204,18 @@ def apply_metadata_from_csv(
     log_callback: Optional[Callable[[str, str], None]] = None,
 ) -> MetadataApplyResult:
     """Update metadata of media files in source_dir using values from CSV and save to output_dir."""
-    csv_path = clean_path(csv_path)
-    source_dir = clean_path(source_dir)
-    output_dir = ensure_directory(output_dir)
+    # If csv_path is a directory, look for media_metadata.csv or any .csv file inside
+    if csv_path.is_dir():
+        cand = csv_path / "media_metadata.csv"
+        if cand.is_file():
+            csv_path = cand
+        else:
+            found = list(csv_path.glob("*.csv"))
+            if found:
+                csv_path = sorted(found)[0]
+    elif not csv_path.suffix or csv_path.suffix.lower() != ".csv":
+        if csv_path.with_suffix(".csv").is_file():
+            csv_path = csv_path.with_suffix(".csv")
 
     if not csv_path.is_file():
         raise ValueError(f"CSV file does not exist: {csv_path}")
