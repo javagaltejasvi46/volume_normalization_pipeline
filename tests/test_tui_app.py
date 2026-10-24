@@ -101,11 +101,32 @@ async def test_tui_app_destination_modal_and_run_all(tmp_path: Path):
 @pytest.mark.anyio
 async def test_tui_app_metadata_modal():
     from batch_audio_leveler.tui.screens.metadata_modal import MetadataModal
+    from textual.widgets import Button, TabbedContent
     app = BatchAudioLevelerApp()
     async with app.run_test() as pilot:
         app.action_metadata()
         await pilot.pause()
         assert isinstance(app.screen, MetadataModal)
+
+        # Check that both Extract and Apply buttons exist in the screen
+        btn_extract = app.screen.query_one("#btn-export-submit", Button)
+        btn_apply = app.screen.query_one("#btn-import-submit", Button)
+        assert btn_extract is not None
+        assert btn_apply is not None
+
+        # Verify initial tab is export
+        tabbed = app.screen.query_one("#meta-tabs", TabbedContent)
+        assert tabbed.active == "tab-export"
+
+        # Click Apply button -> switches to tab-import
+        await pilot.click("#btn-import-submit")
+        await pilot.pause()
+        assert tabbed.active == "tab-import"
+
+        # Click Extract button -> switches back to tab-export
+        await pilot.click("#btn-export-submit")
+        await pilot.pause()
+        assert tabbed.active == "tab-export"
 
         await pilot.press("escape")
         await pilot.pause()

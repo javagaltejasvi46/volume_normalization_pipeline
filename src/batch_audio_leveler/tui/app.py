@@ -431,17 +431,19 @@ class BatchAudioLevelerApp(App[None]):
             self.action_settings()
         elif action in {"meta", "metadata", "m"}:
             self.action_metadata()
-        elif action in {"meta-export", "export-meta", "export-metadata"}:
+        elif action in {"extract", "meta-export", "export-meta", "export-metadata"}:
             if not cmd.args:
-                self.log_message("Usage: meta-export <source_dir> [output_csv_path]", severity="warning")
+                self.action_metadata(initial_tab="tab-export")
             else:
                 src = clean_path(cmd.args[0])
                 csv_p = clean_path(cmd.args[1]) if len(cmd.args) > 1 else (src / "media_metadata.csv")
                 task = MetadataTaskConfig(action="export", source_dir=src, output_csv=csv_p, recursive=True)
                 self.run_metadata_export_worker(task)
-        elif action in {"meta-import", "meta-apply", "apply-meta", "import-meta", "apply-metadata"}:
-            if len(cmd.args) < 3:
-                self.log_message("Usage: meta-import <csv_path> <source_dir> <output_dir>", severity="warning")
+        elif action in {"apply", "meta-import", "meta-apply", "apply-meta", "import-meta", "apply-metadata"}:
+            if not cmd.args:
+                self.action_metadata(initial_tab="tab-import")
+            elif len(cmd.args) < 3:
+                self.log_message("Usage: apply <csv_path> <source_dir> <output_dir> (or type 'apply' without arguments to open editor)", severity="warning")
             else:
                 csv_p = clean_path(cmd.args[0])
                 src = clean_path(cmd.args[1])
@@ -1024,7 +1026,7 @@ class BatchAudioLevelerApp(App[None]):
         elif bid == "btn-quit":
             self.action_quit_app()
 
-    def action_metadata(self) -> None:
+    def action_metadata(self, initial_tab: str = "tab-export") -> None:
         """Open Metadata Management Hub modal (Part 1: Extract to CSV, Part 2: Apply from CSV)."""
         if self.is_busy:
             self.notify("Another task is currently running. Please wait or cancel.", severity="warning")
@@ -1043,7 +1045,11 @@ class BatchAudioLevelerApp(App[None]):
                 self.run_metadata_apply_worker(task)
 
         self.push_screen(
-            MetadataModal(default_dir=default_dir, default_output_dir=self.config.output_dir / "metadata_updated"),
+            MetadataModal(
+                default_dir=default_dir,
+                default_output_dir=self.config.output_dir / "metadata_updated",
+                initial_tab=initial_tab,
+            ),
             _handle_metadata_task,
         )
 
