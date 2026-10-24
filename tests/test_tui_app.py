@@ -111,3 +111,18 @@ async def test_tui_app_metadata_modal():
         await pilot.pause()
         assert not isinstance(app.screen, MetadataModal)
 
+
+@pytest.mark.anyio
+async def test_tui_app_trim_modal():
+    from batch_audio_leveler.tui.screens.trim_modal import TrimModal
+    app = BatchAudioLevelerApp()
+    async with app.run_test() as pilot:
+        app.action_trim()
+        await pilot.pause()
+        assert isinstance(app.screen, TrimModal)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, TrimModal)
+
+

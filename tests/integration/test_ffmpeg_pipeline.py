@@ -225,3 +225,43 @@ def test_metadata_extract_and_apply_integration(synthetic_mp4: Path, tmp_path: P
     assert tags_after["album"] == "Bhavageethe"
     assert tags_after["genre"] == "Folk"
     assert tags_after["year"] == "1998"
+
+
+def test_audio_trim_integration(synthetic_mp4: Path, tmp_path: Path):
+    from batch_audio_leveler.trimmer import (
+        AudioSegment,
+        TrimJobConfig,
+        trim_audio_segments,
+    )
+
+    out_dir = tmp_path / "trimmed_clips"
+
+    cfg = TrimJobConfig(
+        source_file=synthetic_mp4,
+        segments=[
+            AudioSegment(start_seconds=0.5, end_seconds=1.5, label="part1"),
+            AudioSegment(start_seconds=1.0, end_seconds=2.5, label="part2"),
+        ],
+        output_dir=out_dir,
+        output_format="mp3",
+    )
+
+    result = trim_audio_segments(
+        config=cfg,
+        ffmpeg_path=env.ffmpeg.path,
+        ffprobe_path=env.ffprobe.path,
+    )
+
+    assert len(result.exported_files) == 2
+    assert len(result.failed_segments) == 0
+
+    clip1 = out_dir / f"{synthetic_mp4.stem}_part1.mp3"
+    clip2 = out_dir / f"{synthetic_mp4.stem}_part2.mp3"
+    assert clip1.is_file() and clip1.stat().st_size > 0
+    assert clip2.is_file() and clip2.stat().st_size > 0
+
+    # Probe clip1 to verify it is valid audio and duration ~ 1.0s
+    probe_clip1 = probe_file(clip1, env.ffprobe.path)
+    assert len(probe_clip1.audio_streams) == 1
+    assert abs(probe_clip1.duration_seconds - 1.0) < 0.2
+

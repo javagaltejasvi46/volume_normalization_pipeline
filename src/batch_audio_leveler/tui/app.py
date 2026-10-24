@@ -36,7 +36,7 @@ from batch_audio_leveler.models import (
     JobStatus,
     NormalizationMode,
 )
-from batch_audio_leveler.metadata import (
+from batch_audio_leveler.metadata.manager import (
     apply_metadata_from_csv,
     extract_directory_metadata,
 )
@@ -45,6 +45,11 @@ from batch_audio_leveler.normalization.targets import calculate_batch_target
 from batch_audio_leveler.queue_manager import QueueManager
 from batch_audio_leveler.reporting.csv_report import export_csv_report
 from batch_audio_leveler.reporting.json_report import export_json_report
+from batch_audio_leveler.trimmer import (
+    AudioSegment,
+    TrimJobConfig,
+    trim_audio_segments,
+)
 from batch_audio_leveler.tui.command_parser import CommandHistory, parse_command_line
 from batch_audio_leveler.tui.screens.confirm_modal import ConfirmModal
 from batch_audio_leveler.tui.screens.destination_modal import DestinationModal
@@ -55,6 +60,7 @@ from batch_audio_leveler.tui.screens.metadata_modal import (
     MetadataTaskConfig,
 )
 from batch_audio_leveler.tui.screens.settings_modal import SettingsModal
+from batch_audio_leveler.tui.screens.trim_modal import TrimModal
 from batch_audio_leveler.utils.cancellation import CancellationToken
 from batch_audio_leveler.utils.paths import (
     clean_path,
@@ -187,6 +193,7 @@ class BatchAudioLevelerApp(App[None]):
         Binding("space", "action_details", "Details", show=True),
         Binding("s", "action_settings", "Settings", show=True),
         Binding("m", "action_metadata", "Metadata", show=True),
+        Binding("t", "action_trim", "Trim Audio", show=True),
         Binding("r", "action_retry", "Retry Failed", show=False),
         Binding("c", "action_cancel", "Cancel Task", show=True),
         Binding("slash", "focus_command_input", "Command", show=True),
@@ -254,6 +261,7 @@ class BatchAudioLevelerApp(App[None]):
                 yield Button("Details (Space)", id="btn-details", variant="default")
                 yield Button("Settings (S)", id="btn-settings", variant="default")
                 yield Button("Metadata (M)", id="btn-metadata", variant="default")
+                yield Button("Trim (T)", id="btn-trim", variant="default")
                 yield Button("Cancel (C)", id="btn-cancel", variant="error")
                 yield Button("Help (?)", id="btn-help", variant="default")
                 yield Button("Quit (Q)", id="btn-quit", variant="default")
@@ -440,6 +448,9 @@ class BatchAudioLevelerApp(App[None]):
                 out = clean_path(cmd.args[2])
                 task = MetadataTaskConfig(action="apply", source_dir=src, csv_path=csv_p, output_dir=out)
                 self.run_metadata_apply_worker(task)
+        elif action in {"trim", "t", "slice", "cut"}:
+            target = clean_path(cmd.args[0]) if cmd.args else None
+            self.action_trim(target)
         elif action in {"report", "reports"}:
             self.export_reports()
         elif action in {"retry", "r"}:
@@ -1004,6 +1015,8 @@ class BatchAudioLevelerApp(App[None]):
             self.action_settings()
         elif bid == "btn-metadata":
             self.action_metadata()
+        elif bid == "btn-trim":
+            self.action_trim()
         elif bid == "btn-cancel":
             self.action_cancel()
         elif bid == "btn-help":
@@ -1121,6 +1134,78 @@ class BatchAudioLevelerApp(App[None]):
         except Exception as e:
             self.call_from_thread(self.log_message, f"Applying metadata failed: {e}", "error")
             self.call_from_thread(self.notify, f"Applying metadata failed: {e}", severity="error", timeout=6)
+        finally:
+            self.is_busy = False
+            self.current_operation = "Ready"
+            self.call_from_thread(self.update_summary_cards)
+
+    def action_trim(self, target_file: Optional[Path] = None) -> None:
+        """Open interactive Audio Trimmer modal to slice clips between start and end pointers."""
+        if self.is_busy:
+            self.notify("Another task is currently running. Please wait or cancel.", severity="warning")
+            return
+
+        if target_file is None:
+            table = self.query_one("#queue-table", DataTable)
+            if table.cursor_row is not None and 0 <= table.cursor_row < len(self.queue.jobs):
+                target_file = self.queue.jobs[table.cursor_row].path
+            elif self.queue.jobs:
+                target_file = self.queue.jobs[0].path
+
+        def _handle_trim_job(cfg: Optional[TrimJobConfig]) -> None:
+            if cfg:
+                self.run_trim_worker(cfg)
+
+        self.push_screen(
+            TrimModal(
+                default_file=target_file,
+                default_output_dir=self.config.output_dir / "trimmed_audio",
+                ffprobe_path=self.env.ffprobe.path if self.env.ffprobe.available else None,
+            ),
+            _handle_trim_job,
+        )
+
+    @work(thread=True)
+    def run_trim_worker(self, cfg: TrimJobConfig) -> None:
+        if not self.env.ffmpeg.available:
+            self.call_from_thread(
+                self.log_message,
+                f"Cannot trim audio: FFmpeg is missing.\n{self.env.ffmpeg.error_message}",
+                "error",
+            )
+            return
+
+        self.is_busy = True
+        self.current_operation = "Trimming Audio"
+        self.call_from_thread(self.update_summary_cards)
+        self.call_from_thread(
+            self.log_message,
+            f"Starting audio trimming on '{cfg.source_file.name}' ({len(cfg.segments)} segment(s)) -> '{cfg.output_dir}'...",
+            "info",
+        )
+
+        try:
+            res = trim_audio_segments(
+                config=cfg,
+                ffmpeg_path=self.env.ffmpeg.path,
+                ffprobe_path=self.env.ffprobe.path if self.env.ffprobe.available else None,
+                log_callback=lambda msg, sev: self.call_from_thread(self.log_message, msg, sev),
+            )
+            count = len(res.exported_files)
+            self.call_from_thread(
+                self.log_message,
+                f"Audio trimming complete! Exported {count} clip(s) to '{cfg.output_dir.name}'.",
+                "success" if not res.failed_segments else "warning",
+            )
+            self.call_from_thread(
+                self.notify,
+                f"Exported {count} clip(s) to {cfg.output_dir.name}",
+                severity="information" if not res.failed_segments else "warning",
+                timeout=5,
+            )
+        except Exception as e:
+            self.call_from_thread(self.log_message, f"Audio trimming failed: {e}", "error")
+            self.call_from_thread(self.notify, f"Audio trimming failed: {e}", severity="error", timeout=6)
         finally:
             self.is_busy = False
             self.current_operation = "Ready"
