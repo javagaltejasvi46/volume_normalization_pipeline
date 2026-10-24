@@ -143,3 +143,85 @@ def test_kannada_unicode_filename_measurement(synthetic_mp4: Path, tmp_path: Pat
     )
     assert meas.measurement_valid is True
     assert meas.integrated_lufs is not None
+
+
+def test_metadata_extract_and_apply_integration(synthetic_mp4: Path, tmp_path: Path):
+    from batch_audio_leveler.metadata import (
+        extract_directory_metadata,
+        apply_metadata_from_csv,
+        extract_file_tags,
+    )
+    import csv
+
+    # 1. Setup source directory with media file
+    src_dir = tmp_path / "media_source"
+    src_dir.mkdir()
+    sample_file = src_dir / "kannada_track.mp4"
+    sample_file.write_bytes(synthetic_mp4.read_bytes())
+
+    # Add initial metadata with ffmpeg
+    init_file = src_dir / "tagged_track.mp4"
+    subprocess.run([
+        str(env.ffmpeg.path), "-y", "-i", str(sample_file),
+        "-c", "copy",
+        "-metadata", "title=Original Title",
+        "-metadata", "artist=Original Singer",
+        "-metadata", "album=Initial Album",
+        str(init_file)
+    ], check=True)
+    sample_file.unlink()
+
+    # 2. Extract metadata to CSV
+    csv_file = tmp_path / "extracted_metadata.csv"
+    count = extract_directory_metadata(
+        source_dir=src_dir,
+        output_csv_path=csv_file,
+        ffprobe_path=env.ffprobe.path,
+    )
+    assert count == 1
+    assert csv_file.is_file()
+
+    # Verify extracted CSV values
+    with open(csv_file, mode="r", encoding="utf-8-sig") as f:
+        rows = list(csv.DictReader(f))
+    assert len(rows) == 1
+    assert rows[0]["filename"] == "tagged_track.mp4"
+    assert rows[0]["title"] == "Original Title"
+    assert rows[0]["artist"] == "Original Singer"
+    assert rows[0]["album"] == "Initial Album"
+
+    # 3. Modify CSV with new tags
+    rows[0]["title"] = "Updated Kannada Hit"
+    rows[0]["artist"] = "C. Ashwath"
+    rows[0]["album"] = "Bhavageethe"
+    rows[0]["genre"] = "Folk"
+    rows[0]["year"] = "1998"
+
+    updated_csv = tmp_path / "updated_metadata.csv"
+    with open(updated_csv, mode="w", newline="", encoding="utf-8-sig") as f:
+        writer = csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+    # 4. Apply metadata from CSV to output directory
+    output_dir = tmp_path / "metadata_output"
+    res = apply_metadata_from_csv(
+        csv_path=updated_csv,
+        source_dir=src_dir,
+        output_dir=output_dir,
+        ffmpeg_path=env.ffmpeg.path,
+    )
+    assert res.total_in_csv == 1
+    assert res.updated_count == 1
+    assert res.failed_count == 0
+
+    # 5. Verify that the output file in output_dir has updated tags
+    updated_file = output_dir / "tagged_track.mp4"
+    assert updated_file.is_file()
+
+    tags_after = extract_file_tags(updated_file, env.ffprobe.path)
+    assert tags_after["title"] == "Updated Kannada Hit"
+    assert tags_after["artist"] == "C. Ashwath"
+    assert tags_after["album"] == "Bhavageethe"
+    assert tags_after["genre"] == "Folk"
+    assert tags_after["year"] == "1998"

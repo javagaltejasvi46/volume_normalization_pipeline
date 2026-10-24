@@ -36,6 +36,10 @@ from batch_audio_leveler.models import (
     JobStatus,
     NormalizationMode,
 )
+from batch_audio_leveler.metadata import (
+    apply_metadata_from_csv,
+    extract_directory_metadata,
+)
 from batch_audio_leveler.normalization.planner import plan_file_normalization
 from batch_audio_leveler.normalization.targets import calculate_batch_target
 from batch_audio_leveler.queue_manager import QueueManager
@@ -46,6 +50,10 @@ from batch_audio_leveler.tui.screens.confirm_modal import ConfirmModal
 from batch_audio_leveler.tui.screens.destination_modal import DestinationModal
 from batch_audio_leveler.tui.screens.details_modal import DetailsModal
 from batch_audio_leveler.tui.screens.help_modal import HelpModal
+from batch_audio_leveler.tui.screens.metadata_modal import (
+    MetadataModal,
+    MetadataTaskConfig,
+)
 from batch_audio_leveler.tui.screens.settings_modal import SettingsModal
 from batch_audio_leveler.utils.cancellation import CancellationToken
 from batch_audio_leveler.utils.paths import (
@@ -178,6 +186,7 @@ class BatchAudioLevelerApp(App[None]):
         Binding("x", "action_process", "Process", show=True),
         Binding("space", "action_details", "Details", show=True),
         Binding("s", "action_settings", "Settings", show=True),
+        Binding("m", "action_metadata", "Metadata", show=True),
         Binding("r", "action_retry", "Retry Failed", show=False),
         Binding("c", "action_cancel", "Cancel Task", show=True),
         Binding("slash", "focus_command_input", "Command", show=True),
@@ -244,6 +253,7 @@ class BatchAudioLevelerApp(App[None]):
                 yield Button("Process (X)", id="btn-process", variant="success")
                 yield Button("Details (Space)", id="btn-details", variant="default")
                 yield Button("Settings (S)", id="btn-settings", variant="default")
+                yield Button("Metadata (M)", id="btn-metadata", variant="default")
                 yield Button("Cancel (C)", id="btn-cancel", variant="error")
                 yield Button("Help (?)", id="btn-help", variant="default")
                 yield Button("Quit (Q)", id="btn-quit", variant="default")
@@ -411,6 +421,25 @@ class BatchAudioLevelerApp(App[None]):
             self.action_details()
         elif action in {"settings", "s", "config"}:
             self.action_settings()
+        elif action in {"meta", "metadata", "m"}:
+            self.action_metadata()
+        elif action in {"meta-export", "export-meta", "export-metadata"}:
+            if not cmd.args:
+                self.log_message("Usage: meta-export <source_dir> [output_csv_path]", severity="warning")
+            else:
+                src = clean_path(cmd.args[0])
+                csv_p = clean_path(cmd.args[1]) if len(cmd.args) > 1 else (src / "media_metadata.csv")
+                task = MetadataTaskConfig(action="export", source_dir=src, output_csv=csv_p, recursive=True)
+                self.run_metadata_export_worker(task)
+        elif action in {"meta-import", "meta-apply", "apply-meta", "import-meta", "apply-metadata"}:
+            if len(cmd.args) < 3:
+                self.log_message("Usage: meta-import <csv_path> <source_dir> <output_dir>", severity="warning")
+            else:
+                csv_p = clean_path(cmd.args[0])
+                src = clean_path(cmd.args[1])
+                out = clean_path(cmd.args[2])
+                task = MetadataTaskConfig(action="apply", source_dir=src, csv_path=csv_p, output_dir=out)
+                self.run_metadata_apply_worker(task)
         elif action in {"report", "reports"}:
             self.export_reports()
         elif action in {"retry", "r"}:
@@ -973,9 +1002,126 @@ class BatchAudioLevelerApp(App[None]):
             self.action_details()
         elif bid == "btn-settings":
             self.action_settings()
+        elif bid == "btn-metadata":
+            self.action_metadata()
         elif bid == "btn-cancel":
             self.action_cancel()
         elif bid == "btn-help":
             self.action_help()
         elif bid == "btn-quit":
             self.action_quit_app()
+
+    def action_metadata(self) -> None:
+        """Open Metadata Management Hub modal (Part 1: Extract to CSV, Part 2: Apply from CSV)."""
+        if self.is_busy:
+            self.notify("Another task is currently running. Please wait or cancel.", severity="warning")
+            return
+
+        default_dir = Path.cwd()
+        if self.queue.jobs:
+            default_dir = self.queue.jobs[0].path.parent
+
+        def _handle_metadata_task(task: Optional[MetadataTaskConfig]) -> None:
+            if not task:
+                return
+            if task.action == "export":
+                self.run_metadata_export_worker(task)
+            elif task.action == "apply":
+                self.run_metadata_apply_worker(task)
+
+        self.push_screen(
+            MetadataModal(default_dir=default_dir, default_output_dir=self.config.output_dir / "metadata_updated"),
+            _handle_metadata_task,
+        )
+
+    @work(thread=True)
+    def run_metadata_export_worker(self, task: MetadataTaskConfig) -> None:
+        if not self.env.ffprobe.available:
+            self.call_from_thread(
+                self.log_message,
+                f"Cannot export metadata: FFprobe is missing.\n{self.env.ffprobe.error_message}",
+                "error",
+            )
+            return
+
+        self.is_busy = True
+        self.current_operation = "Exporting Metadata"
+        self.call_from_thread(self.update_summary_cards)
+        self.call_from_thread(
+            self.log_message,
+            f"Starting metadata extraction from '{task.source_dir}' -> '{task.output_csv.name}'...",
+            "info",
+        )
+
+        try:
+            count = extract_directory_metadata(
+                source_dir=task.source_dir,
+                output_csv_path=task.output_csv,
+                ffprobe_path=self.env.ffprobe.path,
+                recursive=task.recursive,
+                log_callback=lambda msg, sev: self.call_from_thread(self.log_message, msg, sev),
+            )
+            self.call_from_thread(
+                self.log_message,
+                f"Successfully exported metadata for {count} file(s) to '{task.output_csv}'.",
+                "success",
+            )
+            self.call_from_thread(
+                self.notify,
+                f"Exported metadata for {count} file(s) to {task.output_csv.name}",
+                severity="information",
+                timeout=5,
+            )
+        except Exception as e:
+            self.call_from_thread(self.log_message, f"Metadata extraction failed: {e}", "error")
+            self.call_from_thread(self.notify, f"Metadata extraction failed: {e}", severity="error", timeout=6)
+        finally:
+            self.is_busy = False
+            self.current_operation = "Ready"
+            self.call_from_thread(self.update_summary_cards)
+
+    @work(thread=True)
+    def run_metadata_apply_worker(self, task: MetadataTaskConfig) -> None:
+        if not self.env.ffmpeg.available:
+            self.call_from_thread(
+                self.log_message,
+                f"Cannot apply metadata: FFmpeg is missing.\n{self.env.ffmpeg.error_message}",
+                "error",
+            )
+            return
+
+        self.is_busy = True
+        self.current_operation = "Applying Metadata"
+        self.call_from_thread(self.update_summary_cards)
+        self.call_from_thread(
+            self.log_message,
+            f"Starting metadata application from '{task.csv_path.name}' to '{task.source_dir}' -> '{task.output_dir}'...",
+            "info",
+        )
+
+        try:
+            result = apply_metadata_from_csv(
+                csv_path=task.csv_path,
+                source_dir=task.source_dir,
+                output_dir=task.output_dir,
+                ffmpeg_path=self.env.ffmpeg.path,
+                log_callback=lambda msg, sev: self.call_from_thread(self.log_message, msg, sev),
+            )
+            self.call_from_thread(
+                self.log_message,
+                f"Metadata update finished! Updated: {result.updated_count}, Skipped: {result.skipped_count}, Failed: {result.failed_count}",
+                "success" if result.failed_count == 0 else "warning",
+            )
+            self.call_from_thread(
+                self.notify,
+                f"Updated {result.updated_count}/{result.total_in_csv} file(s) in {task.output_dir.name}",
+                severity="information" if result.failed_count == 0 else "warning",
+                timeout=5,
+            )
+        except Exception as e:
+            self.call_from_thread(self.log_message, f"Applying metadata failed: {e}", "error")
+            self.call_from_thread(self.notify, f"Applying metadata failed: {e}", severity="error", timeout=6)
+        finally:
+            self.is_busy = False
+            self.current_operation = "Ready"
+            self.call_from_thread(self.update_summary_cards)

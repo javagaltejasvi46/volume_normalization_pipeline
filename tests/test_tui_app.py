@@ -96,3 +96,18 @@ async def test_tui_app_destination_modal_and_run_all(tmp_path: Path):
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, DestinationModal)
+
+
+@pytest.mark.anyio
+async def test_tui_app_metadata_modal():
+    from batch_audio_leveler.tui.screens.metadata_modal import MetadataModal
+    app = BatchAudioLevelerApp()
+    async with app.run_test() as pilot:
+        app.action_metadata()
+        await pilot.pause()
+        assert isinstance(app.screen, MetadataModal)
+
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, MetadataModal)
+
